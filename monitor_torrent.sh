@@ -4,7 +4,7 @@ LOG_DIR=~/Media/logs
 
 # Check if transmission-daemon is running
 check_daemon_running() {
-  if ! pgrep -x "transmission-daemon" > /dev/null; then
+  if ! pgrep -f "transmission-daemon" > /dev/null; then
     echo "Transmission daemon is not running. Starting it..."
     transmission-daemon
     # Give daemon time to start
