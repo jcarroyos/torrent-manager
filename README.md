@@ -39,3 +39,6 @@ A simple bash-based torrent management system using Transmission daemon.
 - Interactive menu interface
 
 The scripts automatically start transmission-daemon if it's not already running.
+
+## Screenshot
+<img width="2048" alt="Screenshot 2025-04-19 at 10 18 09 AM" src="https://github.com/user-attachments/assets/874e7f3a-3500-4f6b-bd55-61baf4d1ef18" />
