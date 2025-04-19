@@ -1,26 +1,26 @@
 # Torrent Manager
 
-A simple, bash-based torrent management system for downloading and monitoring torrents using transmission-cli.
+A simple, bash-based torrent management system for downloading and monitoring torrents using Transmission daemon.
 
 ## Overview
 
 This project consists of two main scripts:
 
-1. **torrent_downloader.sh**: Starts torrent downloads and sets up logging.
+1. **torrent_downloader.sh**: Adds torrents to Transmission daemon.
 2. **monitor_torrent.sh**: Monitors active downloads, tracks progress, and provides management options.
 
 ## Features
 
 - Download torrents to organized destination folders
 - Monitor download progress in real-time
-- View detailed download status and logs
-- Stop downloads when needed
-- Consistent logging with progress tracking
+- View detailed torrent information including progress percentage, speed, and ETA
+- Start, stop, and remove torrents
+- Clean interface with interactive menu
 
 ## Requirements
 
 - macOS (or Linux with minor modifications)
-- transmission-cli (can be installed via Homebrew on macOS)
+- transmission-daemon and transmission-remote (can be installed via Homebrew on macOS)
 
 ```bash
 brew install transmission-cli
@@ -36,11 +36,7 @@ chmod +x torrent_downloader.sh
 chmod +x monitor_torrent.sh
 ```
 
-3. Ensure the log directory exists or is created automatically by the script:
-
-```bash
-mkdir -p ~/Media/logs
-```
+3. The scripts will automatically start transmission-daemon if it's not running
 
 ## Usage
 
@@ -54,9 +50,9 @@ mkdir -p ~/Media/logs
 
 2. Select a destination folder from the menu
 3. Enter the magnet link for the torrent you want to download
-4. The script will start the download and begin tracking progress
+4. The script will add the torrent to Transmission daemon
 
-### Monitoring Downloads
+### Monitoring and Managing Downloads
 
 1. Run the monitor script:
 
@@ -66,33 +62,41 @@ mkdir -p ~/Media/logs
 
 2. Use the interactive menu to:
    - Refresh status of all downloads
-   - Monitor a specific download in real-time
-   - Stop unwanted downloads
-   - View detailed logs for specific downloads
+   - View detailed information for a specific torrent
+   - Start paused torrents
+   - Pause running torrents
+   - Remove torrents (with or without data)
+   - Monitor downloads in real-time with auto-refresh
 
 ## How It Works
 
 - **torrent_downloader.sh**:
+  - Ensures transmission-daemon is running
   - Prompts for destination and magnet link
-  - Starts transmission-cli in the background
-  - Creates a log file named after the process ID
-  - Sets up a monitoring process to track download progress
+  - Adds the torrent to the queue using transmission-remote
+  - Reports the torrent ID for future reference
 
 - **monitor_torrent.sh**:
-  - Scans for active transmission-cli processes
-  - Extracts and displays download information
-  - Provides options for managing downloads
-  - Allows real-time monitoring of specific downloads
-
-## Log Files
-
-Log files are stored in `~/Media/logs` with filenames in the format `log_PID.txt` where PID is the process ID of the transmission-cli process.
-
-Each log contains:
-- Download metadata (start time, torrent name, destination)
-- Regular progress updates
-- Download state information
+  - Connects to transmission-daemon using transmission-remote
+  - Displays torrent list with progress, speed, and status information
+  - Provides an interactive menu for torrent management
+  - Allows real-time monitoring with auto-refresh
 
 ## Customize
 
 You can customize the download directories by modifying the `MOVIES_DIR` variable in `torrent_downloader.sh`.
+
+## Advanced Usage
+
+For more advanced usage, you can directly use the transmission-remote command:
+
+```bash
+# List all torrents with details
+transmission-remote -l
+
+# Get detailed info for torrent with ID 1
+transmission-remote -t 1 -i
+
+# Check help for more options
+transmission-remote --help
+```

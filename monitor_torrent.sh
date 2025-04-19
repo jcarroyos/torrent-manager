@@ -2,100 +2,79 @@
 
 LOG_DIR=~/Media/logs
 
-# Function to extract torrent name from magnet link
-extract_torrent_name() {
-  local magnet_link="$1"
-  local encoded_name=$(echo "$magnet_link" | grep -oP 'dn=\K[^&]+')
-  printf '%b\n' "${encoded_name//%/\\x}"
-}
-
-# Function to extract progress percentage from log file
-extract_progress() {
-  local pid="$1"
-  local logfile="$LOG_DIR/log_${pid}.txt"
-  
-  if [[ -f "$logfile" ]]; then
-    # Try to get progress from transmission-remote output first
-    local percent=$(grep "Percent Done" "$logfile" | tail -1 | awk '{print $NF}')
-    
-    # If that doesn't work, try the old method
-    if [ -z "$percent" ]; then
-      percent=$(grep -oP 'Progress: \K[0-9.]+%' "$logfile" | tail -1)
-    fi
-    
-    # If still empty, check for download complete message
-    if [ -z "$percent" ]; then
-      if grep -q "Download is complete" "$logfile"; then
-        percent="100%"
-      fi
-    fi
-    
-    # Return result or N/A
-    if [ -n "$percent" ]; then
-      echo "$percent"
-    else
-      echo "N/A"
-    fi
-  else
-    echo "No log file"
+# Check if transmission-daemon is running
+check_daemon_running() {
+  if ! pgrep -x "transmission-daemon" > /dev/null; then
+    echo "Transmission daemon is not running. Starting it..."
+    transmission-daemon
+    # Give daemon time to start
+    sleep 2
   fi
 }
 
-# Function to extract download state
-extract_state() {
-  local pid="$1"
-  local logfile="$LOG_DIR/log_${pid}.txt"
-  
-  if [[ -f "$logfile" ]]; then
-    local state=$(grep "State" "$logfile" | tail -1 | awk '{$1=""; print $0}' | sed 's/^[ \t]*//')
-    
-    if [ -n "$state" ]; then
-      echo "$state"
-    else
-      echo "Unknown"
-    fi
-  else
-    echo "Unknown"
-  fi
-}
+# Function to display active downloads with progress information
+display_downloads() {
+  check_daemon_running
 
-# Function to display download info
-display_download_info() {
-  local active_downloads=$(ps aux | grep 'transmission-cli magnet:' | grep -v 'grep')
+  # Get torrent list from transmission-remote
+  transmission_output=$(transmission-remote -l)
   
-  if [ -z "$active_downloads" ]; then
+  if [ $? -ne 0 ]; then
+    echo "Failed to connect to transmission daemon."
+    return 1
+  fi
+  
+  # Count torrents (subtract 2 for header and footer lines)
+  torrent_count=$(echo "$transmission_output" | wc -l)
+  torrent_count=$((torrent_count - 2))
+  
+  if [ $torrent_count -eq 0 ]; then
     echo "No active downloads found."
     return 1
   fi
   
   echo "Active downloads:"
-  echo
-
-  IFS=$'\n' read -rd '' -a lines <<<"$active_downloads"
-  for i in "${!lines[@]}"; do
-    line="${lines[$i]}"
-    pid=$(echo "$line" | awk '{print $2}')
-    magnet_link=$(echo "$line" | grep -o 'magnet:.*')
-    
-    # Get name from log file first if available
-    local logfile="$LOG_DIR/log_${pid}.txt"
-    if [[ -f "$logfile" ]]; then
-      readable_name=$(grep "Torrent name:" "$logfile" | head -1 | sed 's/Torrent name: //')
-    fi
-    
-    # Fallback to extraction from magnet link
-    if [ -z "$readable_name" ]; then
-      readable_name=$(extract_torrent_name "$magnet_link")
-    fi
-    
-    progress=$(extract_progress "$pid")
-    state=$(extract_state "$pid")
-    
-    echo "$((i + 1)). [$pid] $readable_name"
-    echo "   Progress: $progress | State: $state"
-  done
+  echo "$transmission_output" | head -n 1  # Print header
+  echo "----------------------------------------------"
+  
+  # Print torrent list without header and sum line
+  echo "$transmission_output" | sed -n '2,$ {/^\s*Sum:/d; p}'
   
   return 0
+}
+
+# Function to get detailed info about a torrent
+get_torrent_details() {
+  local torrent_id=$1
+  transmission-remote -t $torrent_id -i
+}
+
+# Function to stop a torrent
+stop_torrent() {
+  local torrent_id=$1
+  transmission-remote -t $torrent_id --stop
+  echo "Stopped torrent with ID: $torrent_id"
+}
+
+# Function to start a torrent
+start_torrent() {
+  local torrent_id=$1
+  transmission-remote -t $torrent_id --start
+  echo "Started torrent with ID: $torrent_id"
+}
+
+# Function to remove a torrent
+remove_torrent() {
+  local torrent_id=$1
+  local remove_data=$2
+  
+  if [ "$remove_data" = "true" ]; then
+    transmission-remote -t $torrent_id --remove-and-delete
+    echo "Removed torrent and data with ID: $torrent_id"
+  else
+    transmission-remote -t $torrent_id --remove
+    echo "Removed torrent (kept data) with ID: $torrent_id"
+  fi
 }
 
 # Interactive menu
@@ -103,71 +82,104 @@ show_menu() {
   echo
   echo "Options:"
   echo "1. Refresh status"
-  echo "2. Monitor download in real-time"
-  echo "3. Stop a download"
-  echo "4. View detailed log"
-  echo "5. Exit"
+  echo "2. View detailed info for a torrent"
+  echo "3. Start a paused torrent"
+  echo "4. Stop/pause a torrent"
+  echo "5. Remove a torrent"
+  echo "6. Remove a torrent and its data"
+  echo "7. Monitor downloads in real-time"
+  echo "8. Exit"
   echo
   read -p "Choose an option: " choice
   
   case $choice in
-    1) clear; display_download_info; show_menu ;;
+    1) 
+       clear
+       display_downloads
+       show_menu 
+       ;;
     2) 
-      clear
-      read -p "Enter download number to monitor: " number
-      selected="${lines[$((number - 1))]}"
-      pid_to_monitor=$(echo "$selected" | awk '{print $2}')
-      
-      if [[ -n "$pid_to_monitor" ]]; then
-        echo "Monitoring download [$pid_to_monitor]. Press Ctrl+C to stop."
-        while true; do
-          clear
-          echo "Download: $(grep 'Torrent name:' "$LOG_DIR/log_${pid_to_monitor}.txt" | head -1 | sed 's/Torrent name: //')"
-          echo "Progress: $(extract_progress "$pid_to_monitor")"
-          echo "State: $(extract_state "$pid_to_monitor")"
-          echo
-          echo "Last log entries:"
-          tail -10 "$LOG_DIR/log_${pid_to_monitor}.txt"
-          sleep 2
-        done
-      else
-        echo "Invalid selection."
-      fi
-      show_menu
-      ;;
-    3)
-      read -p "Enter number to stop: " number
-      selected="${lines[$((number - 1))]}"
-      pid_to_kill=$(echo "$selected" | awk '{print $2}')
-      
-      if [[ -n "$pid_to_kill" ]]; then
-        kill -9 "$pid_to_kill"
-        echo "Download [$pid_to_kill] stopped."
-      else
-        echo "Invalid selection."
-      fi
-      show_menu
-      ;;
-    4)
-      read -p "Enter download number to view log: " number
-      selected="${lines[$((number - 1))]}"
-      pid_to_view=$(echo "$selected" | awk '{print $2}')
-      
-      if [[ -n "$pid_to_view" ]]; then
-        less "$LOG_DIR/log_${pid_to_view}.txt"
-      else
-        echo "Invalid selection."
-      fi
-      show_menu
-      ;;
-    5) exit 0 ;;
+       read -p "Enter torrent ID: " torrent_id
+       clear
+       get_torrent_details "$torrent_id"
+       echo
+       read -p "Press Enter to continue..."
+       clear
+       display_downloads
+       show_menu 
+       ;;
+    3) 
+       read -p "Enter torrent ID to start: " torrent_id
+       start_torrent "$torrent_id"
+       sleep 1
+       clear
+       display_downloads
+       show_menu 
+       ;;
+    4) 
+       read -p "Enter torrent ID to stop/pause: " torrent_id
+       stop_torrent "$torrent_id"
+       sleep 1
+       clear
+       display_downloads
+       show_menu 
+       ;;
+    5) 
+       read -p "Enter torrent ID to remove (keep data): " torrent_id
+       remove_torrent "$torrent_id" false
+       sleep 1
+       clear
+       display_downloads
+       show_menu 
+       ;;
+    6) 
+       read -p "Enter torrent ID to remove WITH DATA (cannot be undone): " torrent_id
+       read -p "Are you sure you want to delete the data? (y/n): " confirm
+       if [ "$confirm" = "y" ]; then
+         remove_torrent "$torrent_id" true
+       else
+         echo "Operation cancelled."
+       fi
+       sleep 1
+       clear
+       display_downloads
+       show_menu 
+       ;;
+    7)
+       echo "Monitoring downloads in real-time. Press Ctrl+C to stop."
+       echo
+       while true; do
+         clear
+         echo "Refreshed at: $(date '+%H:%M:%S')"
+         display_downloads
+         sleep 3
+       done
+       ;;
+    8) exit 0 ;;
     *) echo "Invalid option"; show_menu ;;
   esac
 }
 
 # Main execution
 clear
-if display_download_info; then
+if display_downloads; then
   show_menu
+else
+  echo
+  echo "Would you like to:"
+  echo "1. Start transmission daemon and try again"
+  echo "2. Exit"
+  read -p "Choose an option: " choice
+  
+  if [ "$choice" = "1" ]; then
+    transmission-daemon
+    sleep 2
+    clear
+    if display_downloads; then
+      show_menu
+    else
+      echo "Still no torrents. Add a torrent using ./torrent_downloader.sh"
+    fi
+  fi
 fi
 

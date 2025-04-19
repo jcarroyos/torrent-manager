@@ -7,6 +7,14 @@ MOVIES_DIR=~/Media/Movies
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
 
+# Check if transmission-daemon is running, if not start it
+if ! pgrep -x "transmission-daemon" > /dev/null; then
+    echo "Starting transmission daemon..."
+    transmission-daemon
+    # Give daemon time to start
+    sleep 2
+fi
+
 # Prompt destination
 echo "Choose destination folder:"
 select opt in "Kids - Español" "Kids - English" "Parents"; do
@@ -24,34 +32,25 @@ read -p "Enter magnet link: " magnet
 # Extract torrent name from magnet link (for display purposes)
 torrent_name=$(echo "$magnet" | grep -oP 'dn=\K[^&]+' | sed 's/%/\\x/g' | xargs -0 printf '%b')
 
-# Change to destination
-cd "$dest" || { echo "Failed to access destination"; exit 1; }
+# Ensure the destination directory exists
+if [ ! -d "$dest" ]; then
+    mkdir -p "$dest"
+fi
 
-# Launch download with logging
-transmission-cli "$magnet" -w "$dest" > /tmp/torrent_temp.log 2>&1 &
-pid=$!
+# Add torrent using transmission-remote
+echo "Adding torrent: $torrent_name"
+transmission-remote --add "$magnet" --download-dir "$dest"
 
-# Create PID-based log file (compatible with monitor script)
-LOGFILE="$LOG_DIR/log_${pid}.txt"
+# Get the ID of the newly added torrent
+sleep 2  # Give time for the torrent to be added
+torrent_id=$(transmission-remote -l | grep -i "$torrent_name" | awk '{print $1}')
 
-# Add download metadata to log
-echo "Download started at: $(date)" > "$LOGFILE"
-echo "Torrent name: $torrent_name" >> "$LOGFILE"
-echo "PID: $pid" >> "$LOGFILE"
-echo "Destination: $dest" >> "$LOGFILE"
-echo "-------------------------------------------" >> "$LOGFILE"
+if [ -z "$torrent_id" ]; then
+    echo "Failed to add torrent or retrieve torrent ID"
+    exit 1
+fi
 
-# Use a background job to monitor the download and update the log file
-(
-  while kill -0 $pid 2>/dev/null; do
-    transmission-remote -t $pid -i 2>/dev/null | grep -E "Percent Done|State|Name" >> "$LOGFILE"
-    echo "Progress check: $(date)" >> "$LOGFILE"
-    echo "-------------------------------------------" >> "$LOGFILE"
-    sleep 10
-  done
-) &
-
-echo "Logging download to $LOGFILE"
-echo "Started download with PID $pid for: $torrent_name"
-echo "To monitor, run: ./monitor_torrent.sh"
+echo "Successfully added torrent with ID: $torrent_id"
+echo "Destination: $dest"
+echo "To monitor downloads, run: ./monitor_torrent.sh"
 
